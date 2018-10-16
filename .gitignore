@@ -1,0 +1,6 @@
+.idea
+vendor
+/pooflix.json
+/.torrent.bolt.db
+/pooflix
+/downloads/
