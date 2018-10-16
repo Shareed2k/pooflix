@@ -137,72 +137,63 @@ func (c *Core) InitializeBackground() error {
 	}()
 
 	return c.http.Run(func(e *echo.Echo) {
-		e.GET("/torrent", routeHandler(func(ctx echo.Context) error {
-			if err := c.engine.NewMagnet("magnet:?xt=urn:btih:74B7F3F188F9CE60DE7F2B547FB60507F2F7222A&tr=http%3A%2F%2Fbt3.t-ru.org%2Fann%3Fmagnet&dn=%5Bfrontendmasters.com%5D%20Introduction%20to%20Data%20Structures%20for%20Interviews%20%5B2018%2C%20ENG%5D"); err != nil {
-				return err
+		e.POST("/torrents/magnet", routeHandler(func(ctx echo.Context) error {
+			link := ctx.FormValue("link")
+
+			if err := c.engine.NewMagnet(link); err != nil {
+				return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
 			}
 
-			return nil
+			return echo.NewHTTPError(http.StatusAccepted)
 		}))
 
-		e.GET("/torrent/list", routeHandler(func(ctx echo.Context) error {
-			return ctx.JSON(200, c.engine.GetTorrents())
+		e.GET("/torrents/list", routeHandler(func(ctx echo.Context) error {
+			return ctx.JSON(http.StatusOK, c.engine.GetTorrents())
 		}))
 
-		e.GET("/torrent/m3u8", routeHandler(func(ctx echo.Context) error {
-			files := c.engine.GetTorrents()["74b7f3f188f9ce60de7f2b547fb60507f2f7222a"].Files
+		e.GET("/torrents/:hash/.m3u", routeHandler(func(ctx echo.Context) error {
+			hash := ctx.Param("hash")
 
-			ctx.Response().Header().Set(echo.HeaderContentType, "application/x-mpegurl; charset=utf-8")
+			if t, ok := c.engine.GetTorrents()[hash]; ok {
+				ctx.Response().Header().Set(echo.HeaderContentType, "application/x-mpegurl; charset=utf-8")
 
-			var str string
-			for i, file := range files {
-				str += "#EXTINF:-1," + file.Path + "\n" + fmt.Sprintf("http://127.0.0.1:8007/torrent/stream/%s/%d\n", "74b7f3f188f9ce60de7f2b547fb60507f2f7222a", i)
+				var str string
+				for i, file := range t.Files {
+					str += fmt.Sprintf("#EXTINF:-1,%s\nhttp://127.0.0.1:8007/torrent/stream/%s/%d\n", file.Path, hash, i)
+				}
+
+				return ctx.String(http.StatusOK, "#EXTM3U\n"+str)
 			}
 
-			return ctx.String(http.StatusOK, "#EXTM3U\n"+str)
+			return echo.ErrNotFound
 		}))
 
-		e.GET("/torrent/stream/:hash/:id", routeHandler(func(ctx echo.Context) error {
+		e.GET("/torrents/stream/:hash/:id", routeHandler(func(ctx echo.Context) error {
 			hash := ctx.Param("hash")
 			id := ctx.Param("id")
 
 			idd, _ := strconv.Atoi(id)
 
 			if t, ok := c.engine.GetTorrents()[hash]; ok {
-				buffer := make([]byte, 512)
+				//buffer := make([]byte, 512)
 
 				rr := t.Files[idd].GetFile()
-				fmt.Println(rr.Path())
-				/*_, err := rr.Read(buffer)
-				if err != nil {
-					return echo.ErrNotFound
-				}*/
-
-				//h := ctx.Response()
-				//h.Writer.Header().Set("Content-Disposition", "attachment; filename=\""+rr.Path()+"\"")
-				//h.Writer.
-
-				entry, err := NewFileReader(rr)
-				if err != nil {
-					return echo.ErrNotFound
-				}
+				entry := rr.NewReader()
 
 				defer func() {
-					if err := entry.Reader.Close(); err != nil {
+					if err := entry.Close(); err != nil {
 						log.Printf("Error closing file reader: %s\n", err)
 					}
 				}()
 
 				//ctx.Response().Status = 206
-				//ctx.Response().Header().Set(echo.HeaderContentType, http.DetectContentType(buffer))
 				ctx.Response().Header().Set("Accept-Ranges", "bytes")
 				ctx.Response().Header().Set("transferMode.dlna.org", "Streaming")
 				ctx.Response().Header().Set("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
-				ctx.Response().Header().Set("Content-Disposition", "attachment; filename=\""+rr.Path()+"\"")
 
-				return ctx.Stream(200, http.DetectContentType(buffer), entry.Reader)
-				//http.ServeContent(ctx.Response(), ctx.Request(), rr.Path(), time.Now(), entry.Reader)
-				//return nil
+				//return ctx.Stream(200, http.DetectContentType(buffer), entry.Reader)
+				http.ServeContent(ctx.Response(), ctx.Request(), rr.Path(), time.Now(), entry)
+				return nil
 			}
 
 			return echo.ErrNotFound

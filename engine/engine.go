@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/labstack/gommon/log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -86,6 +87,9 @@ func (e *Engine) newTorrent(tt *torrent.Torrent) error {
 		e.StartTorrent(t.InfoHash)
 		// }
 	}()
+
+	log.Infof("Engine: Torrent <%s> added, size: %d.", tt.Name(), tt.Length())
+
 	return nil
 }
 
