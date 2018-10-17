@@ -6,13 +6,19 @@ import (
 	"net"
 )
 
-func routeHandler(fn func(ctx echo.Context) error) echo.HandlerFunc {
+type CustomContext struct {
+	Core *Core
+	echo.Context
+}
+
+func routeHandler(fn func(*CustomContext) error) echo.HandlerFunc {
 	return func(ctx echo.Context) error {
-		return fn(ctx)
+		c := ctx.(*CustomContext)
+		return fn(c)
 	}
 }
 
-func getLocalIp() (string, error) {
+func GetLocalIp() (string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", err

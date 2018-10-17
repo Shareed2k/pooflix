@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/pooflix/client"
 	"github.com/pooflix/core"
 	"github.com/urfave/cli"
+	"net/url"
 	"os"
 	"runtime/debug"
 )
@@ -30,19 +32,17 @@ func main() {
 	app.Usage = "PooFlix " + Version
 	app.Version = Version
 
-	c := core.NewDefaultClientConfig()
+	c, err := core.NewDefaultClientConfig()
+	if err != nil {
+		panic(err)
+	}
 
 	app.Metadata = map[string]interface{}{
 		"config": c,
 	}
 
 	app.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:        "download-dir, d",
-			Usage:       "Download directory path",
-			Destination: &c.DownloadDirectory,
-			// Value:  <--- NOTE just cuz you always forget you can set defaults
-		},
+
 	}
 
 	app.Commands = []cli.Command{
@@ -52,7 +52,24 @@ func main() {
 			Usage:   "add torrent",
 			Action: func(ctx *cli.Context) error {
 				cfg := ctx.App.Metadata["config"].(*core.Config)
-				fmt.Println("from client, ", cfg)
+				ip, err := core.GetLocalIp()
+				if err != nil {
+					return err
+				}
+
+				cl := client.NewClient(&url.URL{
+					Host:   fmt.Sprintf("%s:%s", ip, cfg.HttpServerPort),
+					Scheme: "http",
+					Path:   "/api/v1",
+				})
+				torrents, err := cl.ListTorrents()
+				if err != nil {
+					return err
+				}
+
+				for _, t := range torrents {
+					fmt.Println(t)
+				}
 
 				return nil
 			},
@@ -60,8 +77,8 @@ func main() {
 	}
 
 	app.Action = func(ctx *cli.Context) error {
-		_, err := core.New(c)
-		if err != nil {
+		//initialize core
+		if err := core.New(c); err != nil {
 			return err
 		}
 

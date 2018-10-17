@@ -9,7 +9,7 @@ import (
 )
 
 type Server struct {
-	echo         *echo.Echo
+	*echo.Echo
 	config       Config
 	HttpListener net.Listener
 }
@@ -31,7 +31,10 @@ func New(cfg *Config) (*Server, error) {
 		return nil, err
 	}
 
-	return &Server{HttpListener: ln}, nil
+	return &Server{
+		Echo:         echo.New(),
+		HttpListener: ln,
+	}, nil
 }
 
 func NewDefaultClientConfig() *Config {
@@ -39,9 +42,8 @@ func NewDefaultClientConfig() *Config {
 }
 
 func (s *Server) Run(route func(*echo.Echo)) error {
-	s.echo = echo.New()
-	s.echo.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowMethods: []string{"GET", "PUT", "UPDATE", "POST", "DELETE"},
+	s.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowMethods: []string{"GET", "PUT", "UPDATE", "POST", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
 			echo.HeaderAuthorization,
 			echo.HeaderOrigin,
@@ -51,9 +53,9 @@ func (s *Server) Run(route func(*echo.Echo)) error {
 		},
 	}))
 
-	route(s.echo)
+	route(s.Echo)
 
-	return s.echo.Server.Serve(s.HttpListener)
+	return s.Server.Serve(s.HttpListener)
 }
 
 func (s *Server) Config() Config {

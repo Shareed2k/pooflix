@@ -1,19 +1,11 @@
 package core
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/creasty/defaults"
-	"github.com/imdario/mergo"
 	"github.com/labstack/echo"
 	"github.com/pooflix/engine"
 	"github.com/pooflix/server"
-	"log"
-	"net/http"
-	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -40,18 +32,18 @@ type Core struct {
 	}
 }
 
-func New(cfg *Config) (*Core, error) {
+func New(cfg *Config) (err error) {
 	if cfg == nil {
-		cfg = NewDefaultClientConfig()
+		cfg, err = NewDefaultClientConfig()
 	}
 
 	c := &Core{config: cfg}
 
 	if err := c.Initialize(); err != nil {
-		return nil, err
+		return err
 	}
 
-	return c, nil
+	return
 }
 
 func (c *Core) Initialize() error {
@@ -64,30 +56,6 @@ func (c *Core) Initialize() error {
 
 // InitializeForeground sets up Log and DB on *Core.
 func (c *Core) InitializeForeground() error {
-	if c.config.ConfigFilePath != "" {
-		var configFileSettings Config
-		configFile, err := os.Open(c.config.ConfigFilePath)
-		if err != nil {
-			return err
-		}
-
-		if err := json.NewDecoder(configFile).Decode(&configFileSettings); err != nil {
-			return err
-		}
-
-		// Merge in command line settings (which overwrite respective config file settings)
-		if err := mergo.Merge(c.config, configFileSettings); err != nil {
-			return err
-		}
-
-		// Set Default Settings with struct tags
-		if err := defaults.Set(c.config); err != nil {
-			return err
-		}
-	} else {
-		return errors.New("config is missing")
-	}
-
 	//torrent engine
 	c.engine = engine.New()
 
@@ -138,69 +106,18 @@ func (c *Core) InitializeBackground() error {
 		}
 	}()
 
-	return c.http.Run(func(e *echo.Echo) {
-		e.POST("/torrents/magnet", routeHandler(func(ctx echo.Context) error {
-			link := ctx.FormValue("link")
-
-			if err := c.engine.NewMagnet(link); err != nil {
-				return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
-			}
-
-			return echo.NewHTTPError(http.StatusAccepted)
-		}))
-
-		e.GET("/torrents/list", routeHandler(func(ctx echo.Context) error {
-			return ctx.JSON(http.StatusOK, c.engine.GetTorrents())
-		}))
-
-		e.GET("/torrents/:hash/.m3u", routeHandler(func(ctx echo.Context) error {
-			hash := ctx.Param("hash")
-
-			if t, ok := c.engine.GetTorrents()[hash]; ok {
-				ctx.Response().Header().Set(echo.HeaderContentType, "application/x-mpegurl; charset=utf-8")
-
-				ip, err := getLocalIp()
-				if err != nil {
-					log.Printf("Core: can't get internal ip, %v", err)
-					return echo.NewHTTPError(http.StatusInternalServerError, err)
-				}
-
-				var str string
-				for i, file := range t.Files {
-					str += fmt.Sprintf("#EXTINF:-1,%s\nhttp://%s:%s/torrents/%s/stream/%d\n", file.Path, ip, c.config.HttpServerPort, hash, i)
-				}
-
-				return ctx.String(http.StatusOK, "#EXTM3U\n"+str)
-			}
-
-			return echo.ErrNotFound
-		}))
-
-		e.GET("/torrents/:hash/stream/:id", routeHandler(func(ctx echo.Context) error {
-			hash := ctx.Param("hash")
-			id, err := strconv.Atoi(ctx.Param("id"))
-
-			if t, ok := c.engine.GetTorrents()[hash]; err == nil && ok && len(t.Files) > id {
-				rr := t.Files[id].GetFile()
-				entry := rr.NewReader()
-
-				defer func() {
-					if err := entry.Close(); err != nil {
-						log.Printf("Error closing file reader: %s\n", err)
-					}
-				}()
-
-				ctx.Response().Header().Set("Accept-Ranges", "bytes")
-				ctx.Response().Header().Set("transferMode.dlna.org", "Streaming")
-				ctx.Response().Header().Set("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
-
-				http.ServeContent(ctx.Response(), ctx.Request(), rr.Path(), time.Now(), entry)
-				return nil
-			}
-
-			return echo.ErrNotFound
-		}))
+	// Middleware set custom echo context
+	c.http.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(ctx echo.Context) error {
+			return next(&CustomContext{
+				Context: ctx,
+				Core:    c,
+			})
+		}
 	})
+
+	//run http server
+	return c.http.Run(routes)
 }
 
 func (c *Core) reconfigure(ec engine.Config) error {
