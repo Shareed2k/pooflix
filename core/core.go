@@ -115,7 +115,9 @@ func (c *Core) InitializeForeground() error {
 
 	//http service
 	var err error
-	c.http, err = server.New()
+	c.http, err = server.New(&server.Config{
+		IncomingPort: c.config.HttpServerPort,
+	})
 	if err != nil {
 		return err
 	}
@@ -157,9 +159,15 @@ func (c *Core) InitializeBackground() error {
 			if t, ok := c.engine.GetTorrents()[hash]; ok {
 				ctx.Response().Header().Set(echo.HeaderContentType, "application/x-mpegurl; charset=utf-8")
 
+				ip, err := getLocalIp()
+				if err != nil {
+					log.Printf("Core: can't get internal ip, %v", err)
+					return echo.NewHTTPError(http.StatusInternalServerError, err)
+				}
+
 				var str string
 				for i, file := range t.Files {
-					str += fmt.Sprintf("#EXTINF:-1,%s\nhttp://127.0.0.1:8007/torrent/stream/%s/%d\n", file.Path, hash, i)
+					str += fmt.Sprintf("#EXTINF:-1,%s\nhttp://%s:%s/torrents/%s/stream/%d\n", file.Path, ip, c.config.HttpServerPort, hash, i)
 				}
 
 				return ctx.String(http.StatusOK, "#EXTM3U\n"+str)
@@ -168,16 +176,12 @@ func (c *Core) InitializeBackground() error {
 			return echo.ErrNotFound
 		}))
 
-		e.GET("/torrents/stream/:hash/:id", routeHandler(func(ctx echo.Context) error {
+		e.GET("/torrents/:hash/stream/:id", routeHandler(func(ctx echo.Context) error {
 			hash := ctx.Param("hash")
-			id := ctx.Param("id")
+			id, err := strconv.Atoi(ctx.Param("id"))
 
-			idd, _ := strconv.Atoi(id)
-
-			if t, ok := c.engine.GetTorrents()[hash]; ok {
-				//buffer := make([]byte, 512)
-
-				rr := t.Files[idd].GetFile()
+			if t, ok := c.engine.GetTorrents()[hash]; err == nil && ok && len(t.Files) > id {
+				rr := t.Files[id].GetFile()
 				entry := rr.NewReader()
 
 				defer func() {
@@ -186,12 +190,10 @@ func (c *Core) InitializeBackground() error {
 					}
 				}()
 
-				//ctx.Response().Status = 206
 				ctx.Response().Header().Set("Accept-Ranges", "bytes")
 				ctx.Response().Header().Set("transferMode.dlna.org", "Streaming")
 				ctx.Response().Header().Set("contentFeatures.dlna.org", "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000")
 
-				//return ctx.Stream(200, http.DetectContentType(buffer), entry.Reader)
 				http.ServeContent(ctx.Response(), ctx.Request(), rr.Path(), time.Now(), entry)
 				return nil
 			}
@@ -203,15 +205,17 @@ func (c *Core) InitializeBackground() error {
 
 func (c *Core) reconfigure(ec engine.Config) error {
 	dldir, err := filepath.Abs(c.config.DownloadDirectory)
+
 	if err != nil {
 		return fmt.Errorf("invalid path: %v", err)
 	}
+
 	c.config.DownloadDirectory = dldir
+
 	if err := c.engine.Configure(ec); err != nil {
 		return err
 	}
-	//b, _ := json.MarshalIndent(&c, "", "  ")
-	//ioutil.WriteFile(c.config.ConfigFilePath, b, 0755)
+
 	c.state.Config = ec
 
 	return nil

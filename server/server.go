@@ -10,16 +10,32 @@ import (
 
 type Server struct {
 	echo         *echo.Echo
-	httpListener net.Listener
+	config       Config
+	HttpListener net.Listener
 }
 
-func New() (*Server, error) {
-	ln, err := newListener("8007")
+// Ripped straight from https://golang.org/src/net/http/server.go. Have to
+// define our own Listener because we need to be able to Close() it manually.
+// (not really sure why it's not exposed in the http package)
+type tcpKeepAliveListener struct {
+	*net.TCPListener
+}
+
+func New(cfg *Config) (*Server, error) {
+	if cfg == nil {
+		cfg = NewDefaultClientConfig()
+	}
+
+	ln, err := newListener(cfg.IncomingPort)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Server{httpListener: ln}, nil
+	return &Server{HttpListener: ln}, nil
+}
+
+func NewDefaultClientConfig() *Config {
+	return &Config{IncomingPort: "8080"}
 }
 
 func (s *Server) Run(route func(*echo.Echo)) error {
@@ -37,14 +53,11 @@ func (s *Server) Run(route func(*echo.Echo)) error {
 
 	route(s.echo)
 
-	return s.echo.Server.Serve(s.httpListener)
+	return s.echo.Server.Serve(s.HttpListener)
 }
 
-// Ripped straight from https://golang.org/src/net/http/server.go. Have to
-// define our own Listener because we need to be able to Close() it manually.
-// (not really sure why it's not exposed in the http package)
-type tcpKeepAliveListener struct {
-	*net.TCPListener
+func (s *Server) Config() Config {
+	return s.config
 }
 
 func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
